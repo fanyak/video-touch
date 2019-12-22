@@ -110,16 +110,19 @@
             .ball {                
                 position: absolute;
                 z-index:100;
-                bottom: 1px;
-                width: 10px;
-                height: 10px;
+                bottom: 0;
+                width: 20px;
+                height: 20px;
                 min-width: 10px;
                 min-height: 10px;
                 border-radius: 50%;
                 background-color: red;
                 cursor: pointer;
                 will-change: transform;
+                /* Pass all touches to javascript */
+                touch-action: none;
             }
+
            
             .past,
             .duration,
@@ -135,6 +138,14 @@
                 display: inline-block;
                 margin-right: 20px;
                 cursor: pointer;
+            }
+
+            .listbox {
+                display: none;
+            }
+
+            label {
+                color: #ffffff;
             }
 
         </style>
@@ -162,22 +173,42 @@
             </div>
             <div class=" controls">
                 <div class="btn">
-                    <div class="previous">&#171;</div>
-                    <div class="play">&#10162;</div>
-                    <div class="next">&#187;</div>
+                    <div class="previous" aria-label="go to previous">&#171;</div>
+                    <div class="play" aria-label="play">&#10162;</div>
+                    <div class="next" aria-label="go to next">&#187;</div>
                     
                 </div>
                 <div class="bottom">
-                    <div class="past"></div>
+                    <div class="past" role='status' aria-live='polite' arial-relevant="text"></div>
                     <div>
-                        <div class="fullScreen">&#8801;</div>
-                        <div class="duration"></div>
+                        <div class="fullScreen" aria-label="click for fullScreen">&#8801;</div>
+                        <div class="duration" aria-label="video duration"></div>
                     </div>
                 </div>
             </div>
             
         </div>
 
+        <div role='combobox' aria-owns="listbox1" aria-haspopup="listbox" aria-expanded="false">
+            <label for="text"><b>Enter name</b>
+                <input type='text' role="textbox" name="fname" id="text" autocomplete="off" placeholder="name"
+                aria-controls="listbox1" aria-activedescendant>
+            </label>
+
+            <div class="list" role="listbox" id="listbox1" aria-label="matching options" aria-hidden="true" hidden>
+        </div>
+        </div>
+
+        <p><br></p r>
+
+        <form>
+            <label for="menu">choose an item</label>
+            <select name='selection' id="menu">
+                <option value="1">one</option>
+                <option value="2">two</option>
+            </select>
+            <button type="submit">submit</button>
+        </form>
 
         <script>
             class Video {
@@ -194,7 +225,16 @@
                     this.ballInitialPos = 0;
                     this.ballLastPos = 0;
 
+                    this.isRafPending = false;
+
+                    this.play.setAttribute('tabindex', 0)
                     this.play.addEventListener('click', this.togglePlay.bind(this));
+                    this.play.setAttribute('role', 'button');
+                    this.play.addEventListener('keydown', (event) => {
+                        if(event.keyCode === 13){
+                            this.togglePlay(event);
+                        }
+                    })
 
                     // src: https://developer.mozilla.org/el/docs/Web/Guide/Events/Media_events
 
@@ -204,24 +244,45 @@
                         this.videoWidth = Math.min(window.innerWidth, this.video.videoWidth);
                         this.progressBar.style.width = `${this.videoWidth}px`;
                         this.progressBar.style.transform = `translateX(${-this.videoWidth}px)`;
+                        // media session
+                        this.setMediaSession();
                     });
 
                     this.video.addEventListener('timeupdate', this.update.bind(this));
+
                     this.video.addEventListener('ended', this.switchPlayControl.bind(this, true));
+
                     this.controls.forEach((control) => {
+                        control.setAttribute('tabindex', 0);
+                        control.setAttribute('role', 'button');
                         control.addEventListener('click', this.seek.bind(this));
+                        control.addEventListener('keydown', (event) => {
+                            console.log(event)
+                            if(event.keyCode === 13) {
+                                //console.log(event.keyCode)
+                                this.seek(event);
+                            }
+                        })
                     }); 
 
                     this.fullScreen = document.body.querySelector('.fullScreen');
+                    this.fullScreen.setAttribute('tabindex', 0)
                     this.fullScreen.addEventListener('click', (event) => {
-                        this.video.requestFullscreen();
+                        event.stopPropagation();
+                        if(!document.fullscreenElement) {
+                            this.video.requestFullscreen();
+                        } else {
+                            document.exitFullscreen();
+                        }
                     });
+
+                    // screen and orientation changes
 
                     this.video.addEventListener('fullscreenchange', console.log);
 
                     if('orientation' in screen) {
-                        screen.orientation.addEventListener('change', this.manageOrientation.bind(this))
-                    }
+                        //screen.orientation.addEventListener('change', this.manageOrientation.bind(this))
+                    }                                   
 
                     document.addEventListener('visibilitychange', (event) => {
                         if(document.hidden && (this.video.currentTime > 0 && !this.video.paused && !this.video.ended)){
@@ -229,22 +290,40 @@
                         }
                     });
 
-                    // move
+                    // touch movement
                     this.moveStart = this.touchstart.bind(this);
                     this.move = this.touchmove.bind(this);
                     this.moveEnd = this.touchend.bind(this);
 
-                    this.ball.addEventListener('mousedown', this.moveStart, true);
+                    if(window.PointerEvent) {
+                        this.ball.addEventListener('pointerdown', this.moveStart, true);
+                        this.ball.addEventListener('pointermove', this.move, true);
+                        this.ball.addEventListener('pointerup', this.moveEnd, true);
+                        this.ball.addEventListener('pointercancel', this.moveEnd, true);
+                    } else {
+                        this.ball.addEventListener('mousedown', this.moveStart, true);
+
+                        this.ball.addEventListener('touchstart', this.moveStart, true);
+                        this.ball.addEventListener('touchmove', this.move, true);
+                        this.ball.addEventListener('touchend', this.moveEnd, true);
+                        this.ball.addEventListener('touchcancel', this.moveEnd, true);
+                    }
+                    
                 }
+
                 togglePlay(event) {
                     const started = this.video.currentTime > 0;
+                    let label = '';
                     if(started && !this.video.paused) {
                         this.video.pause();
                         this.switchPlayControl(true);
+                        label = 'play'
                     } else {
                         this.video.play();
                         this.switchPlayControl(false);
+                        label = 'pause'
                     }
+                    this.play.setAttribute('aria-label', label);
                 }
 
                 switchPlayControl(stopped) {
@@ -280,7 +359,7 @@
                 manageOrientation(event) {
                     const orientation = event.target.type; 
                     // or document fullscreenElement
-                    if(orientation.startsWith('landscape') && !document.fullscreen) {
+                    if(orientation.startsWith('landscape') && !document.fullscreen) {   
                         this.video.requestFullscreen();
                     }
                     if(orientation.startsWith('portrait') && document.fullscreen) {
@@ -288,29 +367,180 @@
                     }
                 }
 
-                touchstart(event){
+                touchstart(event){ console.log(event);
+                    event.preventDefault();
                     this.video.pause();
-                    console.log(event)
+
+                    if(event.touches && !window.PointerEvent) {
+                        const evt = [].slice.call(event.targetTouches, 0).find((touch) => touch.target === this.ball);
+                        this.ballInitialPos = this.lastPosition ? this.lastPosition : evt.clientX;
+                        return;
+                    }
+
                     this.ballInitialPos = this.lastPosition ? this.lastPosition : event.clientX;
-                    document.body.addEventListener('mousemove', this.move, true);
-                    document.body.addEventListener('mouseup', this.moveEnd, true);
+
+                    if(window.PointerEvent) {
+                        event.target.setPointerCapture(event.pointerId);
+                    } else {               
+                        document.body.addEventListener('mousemove', this.move, true);
+                        document.body.addEventListener('mouseup', this.moveEnd, true);
+                    }
                 }
 
                 touchmove(event){
-                    //console.log(event);
-                    const diff =  event.clientX - this.ballInitialPos;
-                    this.ball.style.transform = `translateX(${diff}px)`;
-                    this.video.currentTime = this.video.duration / this.videoWidth * diff; 
+                    event.preventDefault();
+
+                    // help for pointerEvents
+                    if(!this.ballInitialPos) {
+                        return;
+                    }
+                    if(this.isRafPending) {
+                        return;
+                    }
+                    this.isRafPending = true;
+                    let diff = 0;
+                    if(event.touches && !window.PointerEvent ) {
+                      const evt = [].slice.call(event.targetTouches,0).find((touch) => touch.target === this.ball);
+                      diff =  evt.clientX - this.ballInitialPos;
+                    } else {
+                        diff =  event.clientX - this.ballInitialPos;
+                    }
+                    
+                    this.video.currentTime = this.video.duration / this.videoWidth * diff;
+                    window.requestAnimationFrame(() => {
+                        if(!this.isRafPending) {
+                            return;
+                        }
+                        this.isRafPending = false;
+                        this.ball.style.transform = `translateX(${diff}px)`;
+                    })
                 }
 
                 touchend(event) {
+                    event.preventDefault();
+
                     this.lastPosition = this.ballInitialPos;
-                    document.body.removeEventListener('mousemove', this.move, true);
-                    document.body.removeEventListener('mouseup', this.moveEnd, true);
+
+                    if(event.touches) {                        
+                        return;
+                    }
+                    if(window.PointerEvent) {
+                        event.target.releasePointerCapture(event.pointerId);
+                    } else {
+                        document.body.removeEventListener('mousemove', this.move, true);
+                        document.body.removeEventListener('mouseup', this.moveEnd, true);
+                    }
+
+                    
+                }
+
+                setMediaSession() {
+                    if (!('mediaSession' in navigator)) {
+                        return;
+                    }
+                    navigator.mediaSession.metadata = new MediaMetadata({
+                        title: 'Falling',
+                        artist: 'Known artist',
+                        album: 'Whenever You Need Somebody',
+                        artwork: [
+                        { src: 'https://dummyimage.com/96x96',   sizes: '96x96',   type: 'image/png' },
+                        { src: 'https://dummyimage.com/128x128', sizes: '128x128', type: 'image/png' },
+                        { src: 'https://dummyimage.com/192x192', sizes: '192x192', type: 'image/png' },
+                        { src: 'https://dummyimage.com/256x256', sizes: '256x256', type: 'image/png' },
+                        { src: 'https://dummyimage.com/384x384', sizes: '384x384', type: 'image/png' },
+                        { src: 'https://dummyimage.com/512x512', sizes: '512x512', type: 'image/png' },
+                        ]
+                    });
+}
+            }
+
+            new Video(document.body.querySelector('video'));  
+            
+            //********************* FORM ************************//
+
+            class Form {
+
+                constructor(el) {
+                    this.form = el;
+
+                    this.form.addEventListener('submit', (event) => {
+                        event.preventDefault();
+                        this.formData = new FormData(this.form);
+                        for (const v of this.formData) {
+                            console.log(v);
+                        }
+                    })
                 }
             }
 
-            new Video(document.body.querySelector('video'));           
+            new Form(document.body.querySelector('form'));
+
+
+            class ComboBox {
+                constructor(element) {
+                    this.combobox = element;
+                    this.searchbox = document.body.querySelector('[role=combobox] [type=text]');
+                    this.list = document.body.querySelector('[role = listbox]');
+                    console.log(this.list);
+                    this.searchbox.addEventListener('keyup', this.matchString.bind(this));
+                    this.lastSearchFired = false;
+                    this.waiting = false;
+
+                    this.datalist = [
+                        'emma',
+                        'helen',
+                        'eric',
+                        'andrew',
+                        'elsa',
+                        'elena',
+                        'tom'
+                    ]
+                }
+                matchString(event) {
+                    const results = () => {
+                       const res = this.datalist.filter(item => this.searchbox.value && item.startsWith(this.searchbox.value));
+                        console.log(res);
+                        this.list.innerHTML = "";
+                        res.forEach((item, index, ar) => {
+                            const div = document.createElement('div');
+                            div.setAttribute('role', 'listitem');
+                            div.setAttribute('aria-setsize', ar.length);
+                            div.setAttribute('aria-posinset', index);
+                            div.textContent = item;
+                            div.id=item;
+                            if(index == 0) {
+                                div.setAttribute('aria-selected', 'true')
+                            }
+                            this.list.appendChild(div);
+                        });
+                        if(res.length){
+                            this.list.hidden = false;
+                            this.list.removeAttribute('aria-hidden');
+                            this.combobox.setAttribute('aria-expanded', true);
+                           // this.searchbox.setAttribute('aria-activedescendant', document.body.querySelector('[aria-selected=true]').textContent)
+                        } else {
+                            this.list.hidden = true;
+                            this.list.setAttribute('aria-hidden', true);
+                            this.combobox.setAttribute('aria-expanded', false)
+                            //this.searchbox.removeAttribute('aria-activedescendant');
+                        }
+                       
+                        this.waiting = false;
+                    }
+                    if(!this.lastSearchFired) {
+                        this.lastSearchFired = true;
+                        results();
+                    } else {
+                        if(!this.waiting) {
+                            this.waiting = true;
+                            setTimeout(results.bind(this), 500);
+                        }
+                    }
+                }
+            }
+
+            new ComboBox(document.body.querySelector('[role=combobox'));
+
         </script>
 
     </body>
